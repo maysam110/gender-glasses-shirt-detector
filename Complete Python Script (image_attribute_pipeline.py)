@@ -1,0 +1,166 @@
+# image_attribute_pipeline.py
+
+import cv2
+import torch
+import torchvision.transforms as transforms
+import torch.nn as nn
+from PIL import Image
+import matplotlib.pyplot as plt
+import mediapipe as mp
+from sklearn.cluster import KMeans
+from collections import Counter
+import webcolors
+
+# ----------------------------
+# Model Definitions
+# ----------------------------
+
+class GenderClassifier(nn.Module):
+    def __init__(self):
+        super(GenderClassifier, self).__init__()
+        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False)
+        self.model.fc = nn.Linear(self.model.fc.in_features, 2)
+
+    def forward(self, x):
+        return self.model(x)
+
+
+class GlassesClassifier(nn.Module):
+    def __init__(self):
+        super(GlassesClassifier, self).__init__()
+        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False)
+        self.model.fc = nn.Linear(self.model.fc.in_features, 2)
+
+    def forward(self, x):
+        return self.model(x)
+
+
+# ----------------------------
+# Load Models
+# ----------------------------
+
+gender_model = GenderClassifier()
+gender_model.load_state_dict(torch.load("gender_25epoch_model.pth", map_location=torch.device('cpu')))
+gender_model.eval()
+
+glasses_model = GlassesClassifier()
+glasses_model.load_state_dict(torch.load("glasses_model.pth", map_location=torch.device('cpu')))
+glasses_model.eval()
+
+# ----------------------------
+# Preprocessing
+# ----------------------------
+
+preprocess = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
+
+# ----------------------------
+# Shirt Region Extraction
+# ----------------------------
+
+def get_shirt_region(image_path):
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(static_image_mode=True)
+
+    image = cv2.imread(image_path)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    result = pose.process(image_rgb)
+
+    if not result.pose_landmarks:
+        return None
+
+    landmarks = result.pose_landmarks.landmark
+    h, w, _ = image.shape
+
+    left_shoulder = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
+    right_shoulder = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+    left_hip = landmarks[mp_pose.PoseLandmark.LEFT_HIP]
+    right_hip = landmarks[mp_pose.PoseLandmark.RIGHT_HIP]
+
+    x1 = int(min(left_shoulder.x, right_shoulder.x) * w)
+    x2 = int(max(left_shoulder.x, right_shoulder.x) * w)
+    y1 = int(min(left_shoulder.y, right_shoulder.y) * h)
+    y2 = int(max(left_hip.y, right_hip.y) * h)
+
+    shirt_crop = image[y1:y2, x1:x2]
+    return shirt_crop
+
+# ----------------------------
+# Color Detection
+# ----------------------------
+
+def get_dominant_color(img, k=3):
+    img = cv2.resize(img, (50, 50))
+    img = img.reshape((img.shape[0] * img.shape[1], 3))
+
+    kmeans = KMeans(n_clusters=k)
+    kmeans.fit(img)
+    counts = Counter(kmeans.labels_)
+    center_colors = kmeans.cluster_centers_
+
+    dominant = center_colors[counts.most_common(1)[0][0]]
+    return dominant.astype(int)
+
+
+def rgb_to_name(rgb):
+    try:
+        return webcolors.rgb_to_name(tuple(rgb))
+    except:
+        return f"approx RGB: {tuple(rgb)}"
+
+# ----------------------------
+# Final Prediction Pipeline
+# ----------------------------
+
+def predict_pipeline(image_path):
+    # Load image
+    pil_image = Image.open(image_path).convert('RGB')
+    input_tensor = preprocess(pil_image).unsqueeze(0)
+
+    # Gender Prediction
+    with torch.no_grad():
+        gender_output = gender_model(input_tensor)
+        gender_pred = torch.argmax(gender_output, dim=1).item()
+        gender_label = 'Male' if gender_pred == 0 else 'Female'
+
+    # Glasses Prediction
+    with torch.no_grad():
+        glasses_output = glasses_model(input_tensor)
+        glasses_pred = torch.argmax(glasses_output, dim=1).item()
+        glasses_label = 'Wearing Glasses' if glasses_pred == 1 else 'Not Wearing Glasses'
+
+    # Shirt Color Detection
+    shirt_crop = get_shirt_region(image_path)
+    if shirt_crop is None:
+        shirt_color_label = "Shirt region not detected"
+    else:
+        dominant_color = get_dominant_color(shirt_crop)
+        shirt_color_label = rgb_to_name(dominant_color)
+
+    # Show results
+    print(f"Image: {image_path}")
+    print(f"Gender: {gender_label}")
+    print(f"Glasses: {glasses_label}")
+    print(f"Shirt Color: {shirt_color_label}")
+
+    if shirt_crop is not None:
+        plt.imshow(cv2.cvtColor(shirt_crop, cv2.COLOR_BGR2RGB))
+        plt.title(f"Shirt Color: {shirt_color_label}")
+        plt.axis('off')
+        plt.show()
+
+    return {
+        "gender": gender_label,
+        "glasses": glasses_label,
+        "shirt_color": shirt_color_label
+    }
+
+# ----------------------------
+# Example Usage
+# ----------------------------
+
+if __name__ == "__main__":
+    image_path = "test_images/person1.jpg"  # Replace with your image path
+    result = predict_pipeline(image_path)

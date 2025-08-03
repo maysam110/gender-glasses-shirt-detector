@@ -1,0 +1,36 @@
+# Image Attribute Classification Pipeline 🧠📸
+
+This project is a modular pipeline built in Python to identify **Gender**, **Glasses presence**, and **Shirt Color** from a given image. It combines the power of deep learning (`PyTorch`), pose estimation (`MediaPipe`), and color clustering (`KMeans`) to analyze a person's appearance from a photo.
+
+---
+
+## 🔍 Features
+
+- ✅ Predict **Gender** using a trained CNN model.
+- ✅ Detect if the person is **Wearing Glasses**.
+- ✅ Extract the **Shirt Region** using pose landmarks and identify the **Dominant Shirt Color**.
+- 🧠 Combines classical CV and deep learning in one streamlined pipeline.
+
+---
+
+## 🧩 Pipeline Overview
+
+1. **Preprocess Image**
+2. **Predict Gender** → using `gender_model.pth`
+3. **Predict Glasses** → using `glasses_model.pth`
+4. **Detect Pose Landmarks** → crop shirt region
+5. **Identify Shirt Color** → via KMeans + webcolors
+
+---
+
+## 📁 Folder Structure
+
+├── models/
+│ ├── gender_25epoch_model.pth
+│ └── glasses_model.pth
+├── test_images/
+│ └── your test images here
+├── pipeline.py
+├── utils.py
+├── README.md
+└── requirements.txt
